@@ -6,6 +6,7 @@ const cors = require("cors");
 const applyRoute = require("./src/routes/apply");
 const scoreResumeRoute = require("./src/routes/scoreResumeRoute");
 const feedbackRoutes = require("./src/routes/feedback");
+const partnerBridgeRoutes = require("./src/routes/partnerBridge");
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.get("/health", (req, res) => {
 app.use("/api", applyRoute);
 app.use("/api", scoreResumeRoute);
 app.use("/api", feedbackRoutes);
+app.use("/api", partnerBridgeRoutes);
 
 // 404 for anything unmatched under /api
 app.use("/api", (req, res) => {
