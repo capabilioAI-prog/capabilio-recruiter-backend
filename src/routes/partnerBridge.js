@@ -8,7 +8,7 @@
 // reaches the browser on either side.
 //
 // Required env vars on this service:
-//   CAPABILIO_WEB_API_URL   e.g. https://capabilio-web-backend.onrender.com
+//   CAPABILIO_WEB_API_URL   e.g. https://capabilio-web.onrender.com
 //   PARTNER_BRIDGE_SECRET   must match the same value set on capabilio-web's
 //                           backend (PARTNER_BRIDGE_SECRET there)
 //
@@ -22,6 +22,13 @@
 // application) — this proxy IS the only path an invite becomes visible or
 // actionable now, so if CAPABILIO_WEB_API_URL/PARTNER_BRIDGE_SECRET aren't
 // set correctly, invites are completely invisible, not just delayed.
+//
+// 2026-08-06 (later same day): added connected-college roster + per-student
+// access-request proxies. A recruiter connected to a college can see that
+// college's tier-scoped aggregate student roster and request contact access
+// to ONE specific student — approval happens on the college's placement-cell
+// side (capabilio-web), never here. See src/routes/tasks.js for where the
+// approved/pending/denied status actually gets enforced (task assignment).
 const express = require("express");
 const router = express.Router();
 
@@ -80,11 +87,6 @@ router.get("/partner/institutions", async (req, res) => {
 });
 
 // GET /api/partner/company-invites?email=<recruiter's login email>
-// The frontend should call THIS route (never capabilio-web directly) so the
-// shared secret stays server-side. `email` is required and should be
-// req.user's own recruiter email from this app's Supabase Auth session --
-// the caller must pass it explicitly since this router has no session
-// context of its own (mounted before any auth middleware in server.js).
 router.get("/partner/company-invites", async (req, res) => {
   try {
     const email = (req.query.email || "").trim();
@@ -98,10 +100,6 @@ router.get("/partner/company-invites", async (req, res) => {
 });
 
 // POST /api/partner/company-invites/:id/accept
-// Body: { partnerCompanyId, acceptedByEmail } -- partnerCompanyId should be
-// this app's own companies.id for the logged-in recruiter (NOT a
-// capabilio-web id, it's opaque to that side); acceptedByEmail is for audit
-// display only.
 router.post("/partner/company-invites/:id/accept", async (req, res) => {
   try {
     const data = await callPartnerBridge("POST", `company-invites/${req.params.id}/accept`, {
@@ -124,6 +122,66 @@ router.post("/partner/company-invites/:id/decline", async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error("[partner/company-invites/decline]", err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/partner/company-links?email=<recruiter's login email> -- this
+// recruiter's own ACTIVE college connections.
+router.get("/partner/company-links", async (req, res) => {
+  try {
+    const email = (req.query.email || "").trim();
+    if (!email) return res.status(400).json({ error: "email query param is required." });
+    const data = await callPartnerBridge("GET", "company-links", { query: { email } });
+    res.json(data);
+  } catch (err) {
+    console.error("[partner/company-links]", err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/partner/company-links/:linkId/students -- aggregate, tier-scoped
+// roster for one connected college.
+router.get("/partner/company-links/:linkId/students", async (req, res) => {
+  try {
+    const data = await callPartnerBridge("GET", `company-links/${req.params.linkId}/students`);
+    res.json(data);
+  } catch (err) {
+    console.error("[partner/company-links/students]", err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// POST /api/partner/company-links/:linkId/students/:studentId/request-access
+// Body: { partnerCompanyId, requestedByEmail, reason }
+router.post("/partner/company-links/:linkId/students/:studentId/request-access", async (req, res) => {
+  try {
+    const data = await callPartnerBridge(
+      "POST",
+      `company-links/${req.params.linkId}/students/${req.params.studentId}/request-access`,
+      {
+        body: {
+          partnerCompanyId: req.body?.partnerCompanyId,
+          requestedByEmail: req.body?.requestedByEmail,
+          reason: req.body?.reason,
+        },
+      }
+    );
+    res.json(data);
+  } catch (err) {
+    console.error("[partner/company-links/request-access]", err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/partner/company-links/:linkId/access-requests -- this recruiter's
+// own requests for this link, so the UI can show status per student.
+router.get("/partner/company-links/:linkId/access-requests", async (req, res) => {
+  try {
+    const data = await callPartnerBridge("GET", `company-links/${req.params.linkId}/access-requests`);
+    res.json(data);
+  } catch (err) {
+    console.error("[partner/company-links/access-requests]", err.message);
     res.status(err.status || 500).json({ error: err.message });
   }
 });
