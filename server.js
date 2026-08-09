@@ -12,6 +12,7 @@ const partnerBridgeRoutes = require("./src/routes/partnerBridge");
 const candidateTasksRoutes = require("./src/routes/candidateTasks");
 const tasksRoutes = require("./src/routes/tasks");
 const searchAssistRoutes = require("./src/routes/searchAssist");
+const hiringAssistantRoutes = require("./src/routes/hiringAssistant");
 
 const app = express();
 
@@ -80,6 +81,7 @@ app.use("/api", partnerBridgeRoutes);
 app.use("/api", candidateTasksRoutes);
 app.use("/api", tasksRoutes);
 app.use("/api", searchAssistRoutes);
+app.use("/api", hiringAssistantRoutes);
 
 // 404 for anything unmatched under /api
 app.use("/api", (req, res) => {
