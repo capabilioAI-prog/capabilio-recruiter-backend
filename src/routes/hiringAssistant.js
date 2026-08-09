@@ -148,3 +148,7 @@ ${candidates
 });
 
 module.exports = router;
+// Attached for unit testing only -- see the equivalent note in searchAssist.js.
+module.exports.scoreTier = scoreTier;
+module.exports.sanitizeCandidateInput = sanitizeCandidateInput;
+module.exports.fallbackRecommendation = fallbackRecommendation;

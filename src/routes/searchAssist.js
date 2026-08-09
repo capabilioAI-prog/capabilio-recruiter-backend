@@ -144,3 +144,9 @@ router.post("/search-assist", requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+// Attached for unit testing only -- server.js still just does
+// `app.use("/api", require("./src/routes/searchAssist"))`, which uses the
+// router itself (a function) and never touches these extra properties.
+module.exports.toSafeFilters = toSafeFilters;
+module.exports.sanitizeText = sanitizeText;
+module.exports.clampNumber = clampNumber;
