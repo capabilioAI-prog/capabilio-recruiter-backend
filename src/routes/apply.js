@@ -4,11 +4,39 @@ const { supabase } = require("../lib/supabase");
 const { upload } = require("../middleware/upload");
 const { extractPdfText } = require("../lib/pdf");
 const { scoreResume } = require("../lib/scoreResume");
+const { callPartnerBridge } = require("../lib/partnerBridge");
 
 const router = express.Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{1,64}$/;
+
+// 2026-08-09 dual-track resume+profile matching: "add both Resume scoring
+// and capabilio profile because everyone won't come straightaway to
+// capabilio so in meanwhile capabilio can go with resume things and slowly
+// i will remove resume from capabilio eco-system." This is strictly
+// ADDITIVE -- resume upload/scoring below is completely unchanged for every
+// applicant, linked profile or not. When capabilio_username is supplied,
+// this best-effort resolves it to a real, recruiter_discoverable profile on
+// capabilio-web via the partner bridge (see lib/partnerBridge.js and
+// capabilio-web's GET /candidates/by-username/:username). Any failure here
+// (not configured, network error, no match, private profile) must NEVER
+// block or fail the public apply flow -- it's a candidate submitting a job
+// application, not a Capabilio account action.
+async function tryResolveCapabilioProfile(capabilioUsername) {
+  if (!capabilioUsername || !USERNAME_RE.test(capabilioUsername)) return null;
+  try {
+    const { candidate } = await callPartnerBridge("GET", `candidates/by-username/${encodeURIComponent(capabilioUsername)}`);
+    return candidate || null;
+  } catch (err) {
+    // Includes the expected 404 "no matching profile" case as well as any
+    // real failure (bridge not configured, network error) -- both simply
+    // mean "no verified profile to attach," never an apply failure.
+    console.warn("apply: capabilio profile lookup skipped:", err.message);
+    return null;
+  }
+}
 
 // POST /apply/:jobId  (multipart/form-data: name, email, phone,
 // capabilio_username, resume)
@@ -69,11 +97,16 @@ router.post("/apply/:jobId", upload.single("resume"), async (req, res) => {
     .filter(Boolean)
     .join("\n\n");
 
-  const { score, matchedSkills, missingSkills, summary } = await scoreResume({
-    resumeText,
-    jobTitle: job.title,
-    jobDescription: jobDescriptionForScoring,
-  });
+  // Run the resume score and the (optional, best-effort) verified-profile
+  // lookup concurrently -- neither depends on the other, and the profile
+  // lookup must add zero latency risk to the resume-scoring path it sits
+  // alongside. scoreResume() is the authoritative, unchanged path; a
+  // rejected profile lookup is swallowed inside tryResolveCapabilioProfile
+  // itself, never here.
+  const [{ score, matchedSkills, missingSkills, summary }, capabilioProfile] = await Promise.all([
+    scoreResume({ resumeText, jobTitle: job.title, jobDescription: jobDescriptionForScoring }),
+    tryResolveCapabilioProfile(capabilioUsername),
+  ]);
 
   // Upload the original PDF to private storage for later recruiter review.
   // Best-effort: a storage failure should not lose the application.
@@ -89,7 +122,12 @@ router.post("/apply/:jobId", upload.single("resume"), async (req, res) => {
     console.error("apply: resume upload failed (continuing without it):", err.message);
   }
 
-  const candidateId = crypto.randomUUID();
+  // candidate_id is the real profile id when a verified Capabilio profile
+  // was resolved above (linking this application to that actual account),
+  // and only falls back to a fresh random id for applicants with no linked
+  // profile -- previously this was ALWAYS a random uuid, even when
+  // capabilio_username was supplied, so it never actually linked anything.
+  const candidateId = UUID_RE.test(capabilioProfile?.id || "") ? capabilioProfile.id : crypto.randomUUID();
 
   const { data: application, error: insertErr } = await supabase
     .from("applications")
@@ -110,6 +148,11 @@ router.post("/apply/:jobId", upload.single("resume"), async (req, res) => {
       ats_summary: summary,
       status: "applied",
       scored_at: new Date().toISOString(),
+      // Additive verified-profile signal, never a replacement for the
+      // resume-derived fields above -- see the 2026-08-09 dual-track note
+      // on tryResolveCapabilioProfile().
+      capabilio_profile_verified: !!capabilioProfile,
+      capabilio_profile_data: capabilioProfile || null,
     })
     .select("id")
     .single();
@@ -123,3 +166,6 @@ router.post("/apply/:jobId", upload.single("resume"), async (req, res) => {
 });
 
 module.exports = router;
+// Attached for unit testing only -- see the equivalent note in bulkReject.js.
+module.exports.tryResolveCapabilioProfile = tryResolveCapabilioProfile;
+module.exports.USERNAME_RE = USERNAME_RE;

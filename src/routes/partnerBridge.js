@@ -31,6 +31,7 @@
 // approved/pending/denied status actually gets enforced (task assignment).
 const express = require("express");
 const { requireAuth, requireCompany } = require("../middleware/auth");
+const { callPartnerBridge } = require("../lib/partnerBridge");
 const router = express.Router();
 
 // 2026-08-09 production-hardening: every route below previously had ZERO
@@ -45,34 +46,13 @@ const router = express.Router();
 // partnerCompanyId/companyName/email -- a caller could otherwise message
 // or request access to a candidate while claiming to be a different
 // company than the one they actually belong to.
-
-const WEB_API_URL = process.env.CAPABILIO_WEB_API_URL;
-const PARTNER_SECRET = process.env.PARTNER_BRIDGE_SECRET;
-
-async function callPartnerBridge(method, path, { query = {}, body } = {}) {
-  if (!WEB_API_URL || !PARTNER_SECRET) {
-    const err = new Error("Partner bridge not configured (missing CAPABILIO_WEB_API_URL or PARTNER_BRIDGE_SECRET)");
-    err.status = 503;
-    throw err;
-  }
-  const qs = new URLSearchParams(query).toString();
-  const url = `${WEB_API_URL}/api/partner/${path}${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      "x-partner-secret": PARTNER_SECRET,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const responseBody = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error(responseBody.error || `Partner bridge request failed (${res.status})`);
-    err.status = res.status;
-    throw err;
-  }
-  return responseBody;
-}
+//
+// callPartnerBridge itself now lives in ../lib/partnerBridge.js (extracted
+// 2026-08-09) so src/routes/apply.js -- a PUBLIC, unauthenticated route --
+// can also call capabilio-web server-to-server (to resolve a candidate's
+// capabilio_username) without going through this router's requireAuth,
+// which exists to gate a recruiter's own browser, not this service's
+// internal server-to-server calls.
 
 // GET /api/partner/candidates -- real, recruiter_discoverable-gated candidates
 // from capabilio-web. Same query params as capabilio-web's own recruiter
@@ -175,6 +155,22 @@ router.get("/partner/candidates/:id/schedules", requireAuth, requireCompany, asy
     res.json(data);
   } catch (err) {
     console.error("[partner/candidates/:id/schedules]", err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// GET /api/partner/candidates/by-username/:username -- resolve a
+// capabilio_username (collected on the public apply form, see apply.js) to
+// a real verified profile. Used by the recruiter-facing UI to show/refresh
+// the "Verified Capabilio Profile" badge on an application; apply.js itself
+// calls capabilio-web directly via ../lib/partnerBridge.js rather than this
+// route, since apply.js has no recruiter session to satisfy requireAuth.
+router.get("/partner/candidates/by-username/:username", requireAuth, async (req, res) => {
+  try {
+    const data = await callPartnerBridge("GET", `candidates/by-username/${encodeURIComponent(req.params.username)}`);
+    res.json(data);
+  } catch (err) {
+    console.error("[partner/candidates/by-username]", err.message);
     res.status(err.status || 500).json({ error: err.message });
   }
 });
