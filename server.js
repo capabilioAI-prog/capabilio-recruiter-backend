@@ -15,6 +15,7 @@ const searchAssistRoutes = require("./src/routes/searchAssist");
 const hiringAssistantRoutes = require("./src/routes/hiringAssistant");
 const workflowRoutes = require("./src/routes/workflow");
 const messageDraftRoutes = require("./src/routes/messageDraft");
+const bulkRejectRoutes = require("./src/routes/bulkReject");
 
 const app = express();
 
@@ -86,6 +87,7 @@ app.use("/api", searchAssistRoutes);
 app.use("/api", hiringAssistantRoutes);
 app.use("/api", workflowRoutes);
 app.use("/api", messageDraftRoutes);
+app.use("/api", bulkRejectRoutes);
 
 // 404 for anything unmatched under /api
 app.use("/api", (req, res) => {
