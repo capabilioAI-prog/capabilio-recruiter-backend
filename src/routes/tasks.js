@@ -23,6 +23,7 @@
 //      before inserting anything. Anything else (pending/denied/none) 403s.
 const express = require("express");
 const { supabase } = require("../lib/supabase");
+const { requireAuth, requireCompany } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -47,21 +48,23 @@ async function checkAccessApproved(linkId, studentId) {
 }
 
 // POST /tasks
-// Body: { candidateId, candidateName, title, description, companyLinkId?, companyId }
-router.post("/tasks", async (req, res) => {
+// Body: { candidateId, candidateName, title, description, companyLinkId? }
+// 2026-08-09: companyId is no longer accepted from the client -- it was a
+// straightforward IDOR (any caller could insert a tasks_challenges row
+// under any company_id they typed in the request body, with zero check
+// they belonged to it). Now derived server-side from the authenticated
+// caller's own recruiters.company_id (see middleware/auth.js).
+router.post("/tasks", requireAuth, requireCompany, async (req, res) => {
   try {
     const candidateId = String(req.body?.candidateId || "").trim();
     const candidateName = String(req.body?.candidateName || "").trim();
     const title = String(req.body?.title || "").trim();
     const description = String(req.body?.description || "").trim();
     const companyLinkId = String(req.body?.companyLinkId || "").trim() || null;
-    const companyId = String(req.body?.companyId || "").trim();
+    const companyId = req.companyId;
 
     if (!candidateName || !title) {
       return res.status(400).json({ error: "candidateName and title are required." });
-    }
-    if (!companyId) {
-      return res.status(400).json({ error: "companyId is required." });
     }
 
     if (companyLinkId) {

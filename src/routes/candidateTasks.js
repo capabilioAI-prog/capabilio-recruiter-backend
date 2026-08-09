@@ -47,13 +47,25 @@ function requirePartnerSecret(req, res, next) {
   next();
 }
 
-router.use(requirePartnerSecret);
-
+// 2026-08-09 BUG FIX: this was `router.use(requirePartnerSecret)` -- applied
+// to EVERY request reaching this router, not just this file's own routes.
+// server.js mounts multiple routers at the same "/api" prefix in sequence
+// (candidateTasksRoutes, then tasksRoutes, etc.); Express only falls through
+// to the next router when the current one doesn't terminate the response.
+// Because this router-level middleware short-circuited with 401/503 for any
+// request lacking a matching x-partner-secret header -- which a normal
+// browser request to a LATER route like POST /api/tasks never has, by
+// design (that header is a private server-to-server secret) -- every real
+// call to POST /api/tasks from TasksChallenges.jsx was being intercepted
+// and rejected here before it ever reached tasksRoutes' own handler.
+// Scoping the gate to only this file's own two routes (below) fixes that
+// cross-router blocking without weakening candidateTasks.js's own posture
+// at all -- both routes still fail closed exactly as before.
 const TASK_FIELDS =
   "id, company_id, job_id, title, description, status, assigned_at, started_at, submitted_at, evaluated_at, evaluator_notes, submission_text, submission_url";
 
 // GET /partner/candidate-tasks?candidateId=<capabilio-web profile id>
-router.get("/partner/candidate-tasks", async (req, res) => {
+router.get("/partner/candidate-tasks", requirePartnerSecret, async (req, res) => {
   try {
     const candidateId = (req.query.candidateId || "").trim();
     if (!candidateId) return res.status(400).json({ error: "candidateId query param is required." });
@@ -86,7 +98,7 @@ router.get("/partner/candidate-tasks", async (req, res) => {
 
 // POST /partner/candidate-tasks/:id/submit
 // Body: { candidateId, submissionText, submissionUrl }
-router.post("/partner/candidate-tasks/:id/submit", async (req, res) => {
+router.post("/partner/candidate-tasks/:id/submit", requirePartnerSecret, async (req, res) => {
   try {
     const { id } = req.params;
     const candidateId = (req.body?.candidateId || "").trim();

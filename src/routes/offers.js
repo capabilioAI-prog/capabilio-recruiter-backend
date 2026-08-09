@@ -18,6 +18,7 @@
 // gate is untouched by this fix.
 const express = require("express");
 const { askClaudeForJson } = require("../lib/anthropic");
+const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -54,7 +55,13 @@ The Hiring Team`;
 // POST /generate-offer-letter
 // { candidateName, jobTitle, department, startDate, currency, baseSalary,
 //   bonus, equity, workLocation, expiryDate } -> { letter: "<text>" }
-router.post("/generate-offer-letter", async (req, res) => {
+// 2026-08-09: gated behind requireAuth -- this calls the Anthropic API on
+// every request (real $ cost per call) and had no auth at all, so anyone
+// with the URL could spam it for free. Generation itself is still
+// unrestricted content-wise (any recruiter can draft a letter for any
+// candidateName/jobTitle they type -- that's normal product behavior, not
+// a vulnerability), only the "must be a logged-in recruiter" gate is new.
+router.post("/generate-offer-letter", requireAuth, async (req, res) => {
   const offer = req.body || {};
   if (!offer.candidateName || !offer.jobTitle) {
     return res.status(400).json({ error: "candidateName and jobTitle are required." });

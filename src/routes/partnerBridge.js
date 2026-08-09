@@ -30,7 +30,21 @@
 // side (capabilio-web), never here. See src/routes/tasks.js for where the
 // approved/pending/denied status actually gets enforced (task assignment).
 const express = require("express");
+const { requireAuth, requireCompany } = require("../middleware/auth");
 const router = express.Router();
+
+// 2026-08-09 production-hardening: every route below previously had ZERO
+// authentication on this service -- callPartnerBridge()'s shared secret
+// only proves THIS SERVICE is legitimate to capabilio-web, it says nothing
+// about who is calling THIS service from the browser. Anyone who knew a
+// URL (e.g. GET /api/partner/candidates/:id) got full candidate PII with
+// no token at all. requireAuth now verifies the caller is a real logged-in
+// recruiter (capabilio-recruiter's own Supabase project). requireCompany
+// additionally resolves the caller's real company_id/name server-side
+// wherever the route previously trusted a client-supplied
+// partnerCompanyId/companyName/email -- a caller could otherwise message
+// or request access to a candidate while claiming to be a different
+// company than the one they actually belong to.
 
 const WEB_API_URL = process.env.CAPABILIO_WEB_API_URL;
 const PARTNER_SECRET = process.env.PARTNER_BRIDGE_SECRET;
@@ -63,7 +77,7 @@ async function callPartnerBridge(method, path, { query = {}, body } = {}) {
 // GET /api/partner/candidates -- real, recruiter_discoverable-gated candidates
 // from capabilio-web. Same query params as capabilio-web's own recruiter
 // search: skill, domain, minElo, verifiedOnly, limit, offset.
-router.get("/partner/candidates", async (req, res) => {
+router.get("/partner/candidates", requireAuth, async (req, res) => {
   try {
     const data = await callPartnerBridge("GET", "candidates", {
       query: { ...req.query, partnerName: "capabilio-recruiter" },
@@ -87,7 +101,7 @@ router.get("/partner/candidates", async (req, res) => {
 // for this path was running code from before this bridge existed, or the
 // request was somehow reaching capabilio-web directly rather than through
 // this proxy. Either way, this route was simply missing -- adding it now.
-router.get("/partner/candidates/:id", async (req, res) => {
+router.get("/partner/candidates/:id", requireAuth, async (req, res) => {
   try {
     const data = await callPartnerBridge("GET", `candidates/${req.params.id}`);
     res.json(data);
@@ -100,12 +114,12 @@ router.get("/partner/candidates/:id", async (req, res) => {
 // POST /api/partner/candidates/:id/message -- send a message to a candidate.
 // Body: { partnerCompanyId, companyName, linkId (required for student
 // candidates -- see capabilio-web's checkStudentAccessGate), subject, body }
-router.post("/partner/candidates/:id/message", async (req, res) => {
+router.post("/partner/candidates/:id/message", requireAuth, requireCompany, async (req, res) => {
   try {
     const data = await callPartnerBridge("POST", `candidates/${req.params.id}/message`, {
       body: {
-        partnerCompanyId: req.body?.partnerCompanyId,
-        companyName: req.body?.companyName,
+        partnerCompanyId: req.companyId,
+        companyName: req.companyName,
         linkId: req.body?.linkId,
         subject: req.body?.subject,
         body: req.body?.body,
@@ -119,11 +133,9 @@ router.post("/partner/candidates/:id/message", async (req, res) => {
 });
 
 // GET /api/partner/candidates/:id/messages?partnerCompanyId=X -- full thread.
-router.get("/partner/candidates/:id/messages", async (req, res) => {
+router.get("/partner/candidates/:id/messages", requireAuth, requireCompany, async (req, res) => {
   try {
-    const partnerCompanyId = (req.query.partnerCompanyId || "").trim();
-    if (!partnerCompanyId) return res.status(400).json({ error: "partnerCompanyId query param is required." });
-    const data = await callPartnerBridge("GET", `candidates/${req.params.id}/messages`, { query: { partnerCompanyId } });
+    const data = await callPartnerBridge("GET", `candidates/${req.params.id}/messages`, { query: { partnerCompanyId: req.companyId } });
     res.json(data);
   } catch (err) {
     console.error("[partner/candidates/:id/messages]", err.message);
@@ -134,12 +146,12 @@ router.get("/partner/candidates/:id/messages", async (req, res) => {
 // POST /api/partner/candidates/:id/schedule -- schedule an interview call.
 // Body: { partnerCompanyId, companyName, linkId (students only), scheduled_at,
 // duration_mins, interview_type, meeting_link, title, description }
-router.post("/partner/candidates/:id/schedule", async (req, res) => {
+router.post("/partner/candidates/:id/schedule", requireAuth, requireCompany, async (req, res) => {
   try {
     const data = await callPartnerBridge("POST", `candidates/${req.params.id}/schedule`, {
       body: {
-        partnerCompanyId: req.body?.partnerCompanyId,
-        companyName: req.body?.companyName,
+        partnerCompanyId: req.companyId,
+        companyName: req.companyName,
         linkId: req.body?.linkId,
         scheduled_at: req.body?.scheduled_at,
         duration_mins: req.body?.duration_mins,
@@ -157,11 +169,9 @@ router.post("/partner/candidates/:id/schedule", async (req, res) => {
 });
 
 // GET /api/partner/candidates/:id/schedules?partnerCompanyId=X
-router.get("/partner/candidates/:id/schedules", async (req, res) => {
+router.get("/partner/candidates/:id/schedules", requireAuth, requireCompany, async (req, res) => {
   try {
-    const partnerCompanyId = (req.query.partnerCompanyId || "").trim();
-    if (!partnerCompanyId) return res.status(400).json({ error: "partnerCompanyId query param is required." });
-    const data = await callPartnerBridge("GET", `candidates/${req.params.id}/schedules`, { query: { partnerCompanyId } });
+    const data = await callPartnerBridge("GET", `candidates/${req.params.id}/schedules`, { query: { partnerCompanyId: req.companyId } });
     res.json(data);
   } catch (err) {
     console.error("[partner/candidates/:id/schedules]", err.message);
@@ -170,7 +180,7 @@ router.get("/partner/candidates/:id/schedules", async (req, res) => {
 });
 
 // GET /api/partner/institutions -- real list of colleges/institutions.
-router.get("/partner/institutions", async (req, res) => {
+router.get("/partner/institutions", requireAuth, async (req, res) => {
   try {
     const data = await callPartnerBridge("GET", "institutions");
     res.json(data);
@@ -181,11 +191,13 @@ router.get("/partner/institutions", async (req, res) => {
 });
 
 // GET /api/partner/company-invites?email=<recruiter's login email>
-router.get("/partner/company-invites", async (req, res) => {
+// 2026-08-09: email is now always the authenticated caller's own login
+// email (req.user.email), never a client-supplied query param -- that
+// previously let anyone read the pending invites addressed to ANY email
+// address just by passing it in the URL.
+router.get("/partner/company-invites", requireAuth, async (req, res) => {
   try {
-    const email = (req.query.email || "").trim();
-    if (!email) return res.status(400).json({ error: "email query param is required." });
-    const data = await callPartnerBridge("GET", "company-invites", { query: { email } });
+    const data = await callPartnerBridge("GET", "company-invites", { query: { email: req.user.email } });
     res.json(data);
   } catch (err) {
     console.error("[partner/company-invites]", err.message);
@@ -194,12 +206,12 @@ router.get("/partner/company-invites", async (req, res) => {
 });
 
 // POST /api/partner/company-invites/:id/accept
-router.post("/partner/company-invites/:id/accept", async (req, res) => {
+router.post("/partner/company-invites/:id/accept", requireAuth, requireCompany, async (req, res) => {
   try {
     const data = await callPartnerBridge("POST", `company-invites/${req.params.id}/accept`, {
       body: {
-        partnerCompanyId: req.body?.partnerCompanyId,
-        acceptedByEmail: req.body?.acceptedByEmail,
+        partnerCompanyId: req.companyId,
+        acceptedByEmail: req.user.email,
       },
     });
     res.json(data);
@@ -210,7 +222,7 @@ router.post("/partner/company-invites/:id/accept", async (req, res) => {
 });
 
 // POST /api/partner/company-invites/:id/decline
-router.post("/partner/company-invites/:id/decline", async (req, res) => {
+router.post("/partner/company-invites/:id/decline", requireAuth, async (req, res) => {
   try {
     const data = await callPartnerBridge("POST", `company-invites/${req.params.id}/decline`, {});
     res.json(data);
@@ -222,11 +234,9 @@ router.post("/partner/company-invites/:id/decline", async (req, res) => {
 
 // GET /api/partner/company-links?email=<recruiter's login email> -- this
 // recruiter's own ACTIVE college connections.
-router.get("/partner/company-links", async (req, res) => {
+router.get("/partner/company-links", requireAuth, async (req, res) => {
   try {
-    const email = (req.query.email || "").trim();
-    if (!email) return res.status(400).json({ error: "email query param is required." });
-    const data = await callPartnerBridge("GET", "company-links", { query: { email } });
+    const data = await callPartnerBridge("GET", "company-links", { query: { email: req.user.email } });
     res.json(data);
   } catch (err) {
     console.error("[partner/company-links]", err.message);
@@ -236,7 +246,7 @@ router.get("/partner/company-links", async (req, res) => {
 
 // GET /api/partner/company-links/:linkId/students -- aggregate, tier-scoped
 // roster for one connected college.
-router.get("/partner/company-links/:linkId/students", async (req, res) => {
+router.get("/partner/company-links/:linkId/students", requireAuth, async (req, res) => {
   try {
     const data = await callPartnerBridge("GET", `company-links/${req.params.linkId}/students`);
     res.json(data);
@@ -248,15 +258,15 @@ router.get("/partner/company-links/:linkId/students", async (req, res) => {
 
 // POST /api/partner/company-links/:linkId/students/:studentId/request-access
 // Body: { partnerCompanyId, requestedByEmail, reason }
-router.post("/partner/company-links/:linkId/students/:studentId/request-access", async (req, res) => {
+router.post("/partner/company-links/:linkId/students/:studentId/request-access", requireAuth, requireCompany, async (req, res) => {
   try {
     const data = await callPartnerBridge(
       "POST",
       `company-links/${req.params.linkId}/students/${req.params.studentId}/request-access`,
       {
         body: {
-          partnerCompanyId: req.body?.partnerCompanyId,
-          requestedByEmail: req.body?.requestedByEmail,
+          partnerCompanyId: req.companyId,
+          requestedByEmail: req.user.email,
           reason: req.body?.reason,
         },
       }
@@ -270,7 +280,7 @@ router.post("/partner/company-links/:linkId/students/:studentId/request-access",
 
 // GET /api/partner/company-links/:linkId/access-requests -- this recruiter's
 // own requests for this link, so the UI can show status per student.
-router.get("/partner/company-links/:linkId/access-requests", async (req, res) => {
+router.get("/partner/company-links/:linkId/access-requests", requireAuth, async (req, res) => {
   try {
     const data = await callPartnerBridge("GET", `company-links/${req.params.linkId}/access-requests`);
     res.json(data);

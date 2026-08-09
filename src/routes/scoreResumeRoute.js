@@ -1,5 +1,6 @@
 const express = require("express");
 const { scoreResume } = require("../lib/scoreResume");
+const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -8,7 +9,9 @@ const router = express.Router();
 // (score, matchedSkills, missingSkills, summary). Scoring now normally
 // happens automatically inside /apply/:jobId; this route lets a recruiter
 // re-score manually if needed.
-router.post("/score-resume", async (req, res) => {
+// 2026-08-09: gated behind requireAuth -- a manual recruiter tool with no
+// login check before, callable by anyone for free AI/compute usage.
+router.post("/score-resume", requireAuth, async (req, res) => {
   const { resumeText, jobTitle, jobDescription } = req.body || {};
 
   if (typeof resumeText !== "string" || !resumeText.trim()) {

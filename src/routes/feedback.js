@@ -1,13 +1,16 @@
 const express = require("express");
 const { askClaudeForJson } = require("../lib/anthropic");
 const { sendEmail } = require("../lib/email");
+const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
 
 // POST /generate-feedback
 // { candidateName, jobTitle, score, missingSkills, atsSummary, strengths }
 // -> { feedback: "<email body text>" }
-router.post("/generate-feedback", async (req, res) => {
+// 2026-08-09: gated behind requireAuth -- same Anthropic cost-abuse reason
+// as offers.js's /generate-offer-letter.
+router.post("/generate-feedback", requireAuth, async (req, res) => {
   const {
     candidateName,
     jobTitle,
@@ -64,7 +67,9 @@ The Hiring Team`;
 
 // POST /send-feedback
 // { candidateEmail, candidateName, feedback }
-router.post("/send-feedback", async (req, res) => {
+// 2026-08-09: gated behind requireAuth -- was an open email-send relay to
+// any candidateEmail with no login required (spam/abuse risk).
+router.post("/send-feedback", requireAuth, async (req, res) => {
   const { candidateEmail, candidateName, feedback } = req.body || {};
 
   if (!candidateEmail || !feedback) {

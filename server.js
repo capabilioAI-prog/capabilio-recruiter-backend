@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 
 const applyRoute = require("./src/routes/apply");
 const scoreResumeRoute = require("./src/routes/scoreResumeRoute");
@@ -37,6 +38,31 @@ app.use(
 // express.json() only engages for application/json bodies, so it's safe to
 // mount globally even though /apply/:jobId uses multipart/form-data.
 app.use(express.json({ limit: "1mb" }));
+
+// 2026-08-09 production-hardening: no rate limiting existed anywhere on
+// this service. A baseline limit on every /api route, plus a much
+// stricter one on /apply/:jobId specifically -- it's the one route that
+// MUST stay unauthenticated (public job application form) and is also the
+// most expensive per-call (PDF parsing + an AI scoring call + a file
+// upload), so it's the most attractive target for abuse/DoS. A real
+// candidate applying to a job submits once, maybe twice if they made a
+// mistake -- 5 per 15 minutes per IP is generous for that, not for a script.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please try again shortly." },
+});
+const applyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many applications submitted from this network. Please try again later." },
+});
+app.use("/api", apiLimiter);
+app.use("/api/apply", applyLimiter);
 
 app.get("/", (req, res) => {
   res.json({ ok: true, service: "capabilio-recruiter-backend" });
