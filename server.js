@@ -18,6 +18,7 @@ const messageDraftRoutes = require("./src/routes/messageDraft");
 const bulkRejectRoutes = require("./src/routes/bulkReject");
 const jobDescriptionRoutes = require("./src/routes/jobDescription");
 const resumeScreeningRoutes = require("./src/routes/resumeScreening");
+const interviewSessionRoutes = require("./src/routes/interviewSession");
 
 const app = express();
 
@@ -92,6 +93,7 @@ app.use("/api", messageDraftRoutes);
 app.use("/api", bulkRejectRoutes);
 app.use("/api", jobDescriptionRoutes);
 app.use("/api", resumeScreeningRoutes);
+app.use("/api", interviewSessionRoutes);
 
 // 404 for anything unmatched under /api
 app.use("/api", (req, res) => {
