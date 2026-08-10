@@ -127,6 +127,35 @@ router.post("/bulk-reject-feedback", requireAuth, requireCompany, async (req, re
           .eq("id", app.id);
         if (updateErr) throw updateErr;
 
+        // Best-effort audit trail for Fairness Ledger. This route runs under
+        // the service-role key (no auth.uid()), so it can't call the
+        // write_audit_log RPC that the single-reject/shortlist flows use in
+        // ApplicationsView.jsx (that RPC is SECURITY DEFINER and requires a
+        // real recruiter session) -- it inserts into audit_log directly
+        // instead, using req.companyId/req.user (already verified above) as
+        // the actor, same shape the RPC would have produced.
+        supabase
+          .from("audit_log")
+          .insert({
+            company_id: req.companyId,
+            actor_id: req.user.id,
+            actor_label: req.user.email || "Bulk rejection",
+            action: "application.rejected",
+            entity_type: "application",
+            entity_id: String(app.id),
+            before: { status: "applied" },
+            after: {
+              status: "rejected",
+              score: app.score ?? null,
+              matched_skills: app.matched_skills || [],
+              missing_skills: app.missing_skills || [],
+              feedback_text: feedback,
+            },
+          })
+          .then(({ error: auditErr }) => {
+            if (auditErr) console.error(`[bulk-reject-feedback] audit_log insert failed for ${app.id}:`, auditErr.message);
+          });
+
         results.push({ id: app.id, sent: true });
       } catch (err) {
         console.error(`[bulk-reject-feedback] failed for application ${app.id}:`, err.message);
