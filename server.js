@@ -17,6 +17,7 @@ const workflowRoutes = require("./src/routes/workflow");
 const messageDraftRoutes = require("./src/routes/messageDraft");
 const bulkRejectRoutes = require("./src/routes/bulkReject");
 const jobDescriptionRoutes = require("./src/routes/jobDescription");
+const resumeScreeningRoutes = require("./src/routes/resumeScreening");
 
 const app = express();
 
@@ -90,6 +91,7 @@ app.use("/api", workflowRoutes);
 app.use("/api", messageDraftRoutes);
 app.use("/api", bulkRejectRoutes);
 app.use("/api", jobDescriptionRoutes);
+app.use("/api", resumeScreeningRoutes);
 
 // 404 for anything unmatched under /api
 app.use("/api", (req, res) => {
@@ -108,7 +110,10 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ error: err.message });
   }
   if (err.code === "LIMIT_FILE_SIZE") {
-    return res.status(400).json({ error: "Resume must be under 5MB." });
+    return res.status(400).json({ error: "Each resume must be under 5MB." });
+  }
+  if (err.code === "LIMIT_FILE_COUNT") {
+    return res.status(400).json({ error: "You can upload at most 15 resumes at once." });
   }
   res.status(500).json({ error: "Internal server error." });
 });
